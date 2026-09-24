@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 function StudyMaterials() {
   const [file, setFile] = useState(null)
@@ -6,6 +6,9 @@ function StudyMaterials() {
   const [generatingSummary, setGeneratingSummary] = useState(false)
   const [message, setMessage] = useState('')
   const [summary, setSummary] = useState('')
+
+  const uploadRequestId = useRef(0)
+  const summaryRequestId = useRef(0)
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0]
@@ -20,7 +23,7 @@ function StudyMaterials() {
 
     if (selectedFile.type !== 'application/pdf') {
       setFile(null)
-      setMessage('Please select a valid PDF file.')
+      setMessage('Please select a PDF file.')
       return
     }
 
@@ -30,137 +33,150 @@ function StudyMaterials() {
   const handleUpload = async () => {
     if (!file || uploading) return
 
+    const id = ++uploadRequestId.current
+
     setUploading(true)
     setMessage('')
-
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30000)
+    setSummary('')
 
     try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+
+      const formData = new FormData()
+      formData.append('file', file)
+
       const response = await fetch('http://localhost:5001/api/upload', {
         method: 'POST',
         body: formData,
-        signal: controller.signal
+        signal: controller.signal,
       })
+
+      clearTimeout(timeout)
 
       const data = await response.json()
 
+      if (id !== uploadRequestId.current) return
+
       if (!response.ok) {
-        throw new Error(data.message || 'Upload failed.')
+        throw new Error(data.error || 'Failed to upload PDF.')
       }
 
       setMessage(
-        'PDF uploaded successfully. You can now generate a summary or ask AI questions.'
+        data.message || 'PDF uploaded successfully. You can now generate a summary.'
       )
     } catch (error) {
+      if (id !== uploadRequestId.current) return
+
       if (error.name === 'AbortError') {
-        setMessage('The upload took too long. Please try again.')
+        setMessage('PDF upload took too long. Please try again.')
       } else {
-        setMessage(error.message || 'Unable to connect to the server.')
+        setMessage(error.message || 'Unable to upload the PDF.')
       }
     } finally {
-      clearTimeout(timeout)
-      setUploading(false)
+      if (id === uploadRequestId.current) {
+        setUploading(false)
+      }
     }
   }
 
-  const generateSummary = async () => {
+  const handleSummary = async () => {
     if (generatingSummary) return
+
+    const id = ++summaryRequestId.current
 
     setGeneratingSummary(true)
     setMessage('')
     setSummary('')
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 45000)
-
     try {
-      const response = await fetch('http://localhost:5001/api/summary', {
-        method: 'POST',
-        signal: controller.signal
-      })
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 45000)
+
+      const response = await fetch(
+        'http://localhost:5001/api/summary',
+        {
+          method: 'POST',
+          signal: controller.signal,
+        }
+      )
+
+      clearTimeout(timeout)
 
       const data = await response.json()
 
+      if (id !== summaryRequestId.current) return
+
       if (!response.ok) {
-        throw new Error(data.message || 'Could not generate summary.')
+        throw new Error(data.error || 'Failed to generate summary.')
       }
 
-      if (
-        !data.summary ||
-        typeof data.summary !== 'string' ||
-        !data.summary.trim()
-      ) {
+      if (!data.summary || typeof data.summary !== 'string') {
         throw new Error('The AI returned an empty summary.')
       }
 
       setSummary(data.summary)
     } catch (error) {
+      if (id !== summaryRequestId.current) return
+
       if (error.name === 'AbortError') {
         setMessage('Summary generation took too long. Please try again.')
       } else {
-        setMessage(error.message || 'Unable to connect to the server.')
+        setMessage(error.message || 'Unable to generate the summary.')
       }
     } finally {
-      clearTimeout(timeout)
-      setGeneratingSummary(false)
+      if (id === summaryRequestId.current) {
+        setGeneratingSummary(false)
+      }
     }
   }
 
   return (
-    <div className="section-page">
-      <h2>Study Materials</h2>
+    <div className="section">
+      <div className="card">
+        <h2>Study Materials</h2>
+        <p>Upload your PDF notes and generate an AI summary.</p>
 
-      <p>
-        Upload your study PDF and use AI to summarize and understand your
-        material.
-      </p>
+        <input
+          type="file"
+          accept=".pdf,application/pdf"
+          onChange={handleFileChange}
+          disabled={uploading || generatingSummary}
+        />
 
-      <input
-        type="file"
-        accept=".pdf,application/pdf"
-        onChange={handleFileChange}
-      />
-
-      {file && (
-        <div className="file-info">
-          <h3>Selected File</h3>
-          <p>{file.name}</p>
-          <p>{(file.size / 1024).toFixed(2)} KB</p>
-
-          <button onClick={handleUpload} disabled={uploading}>
-            {uploading ? 'Uploading...' : 'Upload PDF'}
-          </button>
-        </div>
-      )}
-
-      {message && (
-        <p style={{ marginTop: '20px' }}>
-          {message}
-        </p>
-      )}
-
-      {file && !uploading && (
-        <button
-          onClick={generateSummary}
-          disabled={generatingSummary}
-          style={{ marginTop: '20px' }}
-        >
-          {generatingSummary ? 'Generating Summary...' : 'Generate AI Summary'}
-        </button>
-      )}
-
-      {summary && (
-        <div className="file-info">
-          <h3>AI Summary</h3>
-          <p style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7' }}>
-            {summary}
+        {file && (
+          <p>
+            Selected file: <strong>{file.name}</strong>
           </p>
-        </div>
-      )}
+        )}
+
+        <button
+          onClick={handleUpload}
+          disabled={!file || uploading || generatingSummary}
+        >
+          {uploading ? 'Uploading...' : 'Upload PDF'}
+        </button>
+
+        <button
+          onClick={handleSummary}
+          disabled={uploading || generatingSummary}
+        >
+          {generatingSummary ? 'Generating Summary...' : 'Generate Summary'}
+        </button>
+
+        {message && (
+          <div className="message">
+            <p>{message}</p>
+          </div>
+        )}
+
+        {summary && (
+          <div className="summary">
+            <h3>AI Summary</h3>
+            <p>{summary}</p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

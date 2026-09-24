@@ -1,130 +1,128 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 function AskAI() {
   const [question, setQuestion] = useState('')
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(false)
+  const requestId = useRef(0)
 
   const handleAsk = async () => {
     if (!question.trim() || loading) return
 
-    const userQuestion = question.trim()
+    const id = ++requestId.current
+    const currentQuestion = question.trim()
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        type: 'user',
-        text: userQuestion
-      }
-    ])
-
-    setQuestion('')
     setLoading(true)
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30000)
+    setQuestion('')
 
     try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+
       const response = await fetch('http://localhost:5001/api/ask', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          question: userQuestion
-        }),
-        signal: controller.signal
+        body: JSON.stringify({ question: currentQuestion }),
+        signal: controller.signal,
       })
+
+      clearTimeout(timeout)
 
       const data = await response.json()
 
+      if (id !== requestId.current) return
+
       if (!response.ok) {
-        throw new Error(data.answer || 'The AI server returned an error.')
+        throw new Error(data.error || 'Failed to get AI response.')
       }
 
-      if (!data.answer || typeof data.answer !== 'string' || !data.answer.trim()) {
+      if (!data.answer || typeof data.answer !== 'string') {
         throw new Error('The AI returned an empty response.')
       }
 
       setMessages((prev) => [
         ...prev,
-        {
-          type: 'ai',
-          text: data.answer
-        }
+        { type: 'user', text: currentQuestion },
+        { type: 'ai', text: data.answer },
       ])
     } catch (error) {
-      let errorMessage = 'Unable to get an AI response. Please try again.'
+      if (id !== requestId.current) return
 
       if (error.name === 'AbortError') {
-        errorMessage = 'The AI response took too long. Please try again.'
-      } else if (error.message) {
-        errorMessage = error.message
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'ai',
+            text: 'The AI took too long to respond. Please try again.',
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'ai',
+            text: error.message || 'Unable to connect to the AI server.',
+          },
+        ])
       }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: 'ai',
-          text: errorMessage
-        }
-      ])
     } finally {
-      clearTimeout(timeout)
-      setLoading(false)
-    }
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleAsk()
+      if (id === requestId.current) {
+        setLoading(false)
+      }
     }
   }
 
   return (
-    <div className="ask-ai">
-      <h1>Ask AI</h1>
-      <p>Ask questions and get help with your studies.</p>
+    <div className="section">
+      <div className="card ask-card">
+        <h2>Ask AI</h2>
+        <p>Ask questions and get clear explanations.</p>
 
-      <div className="chat-box">
-        {messages.length === 0 ? (
-          <div className="empty-chat">
-            <h3>How can I help you?</h3>
-            <p>Ask me anything about your studies.</p>
-          </div>
-        ) : (
-          messages.map((message, index) => (
-            <div
-              key={index}
-              className={`message ${message.type}`}
-            >
-              <strong>{message.type === 'user' ? 'You' : 'AI'}</strong>
-              <p>{message.text}</p>
-            </div>
-          ))
-        )}
-
-        {loading && (
-          <div className="message ai">
-            <strong>AI</strong>
-            <p>Thinking...</p>
-          </div>
-        )}
-      </div>
-
-      <div className="input-area">
         <textarea
-          placeholder="Ask a study question..."
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={handleKeyDown}
+          placeholder="Ask anything about your studies..."
           disabled={loading}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              handleAsk()
+            }
+          }}
         />
 
         <button onClick={handleAsk} disabled={loading || !question.trim()}>
           {loading ? 'Thinking...' : 'Ask AI'}
         </button>
+
+        <div className="chat-box">
+          {messages.length === 0 && !loading && (
+            <p className="empty-message">
+              Ask a question to start learning.
+            </p>
+          )}
+
+          {messages.map((message, index) => (
+            <div
+              key={index}
+              className={
+                message.type === 'user' ? 'user-message' : 'ai-message'
+              }
+            >
+              <strong>{message.type === 'user' ? 'You' : 'AI'}</strong>
+              <p>{message.text}</p>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="ai-message">
+              <strong>AI</strong>
+              <p>Thinking...</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
